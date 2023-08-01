@@ -3,18 +3,9 @@ package api
 import (
 	"bytes"
 	"compress/gzip"
-	"context"
 	"encoding/json"
-	"fmt"
-	"math/big"
-	"net/http"
-	"net/http/httptest"
-	"testing"
-	"time"
-
 	"github.com/alicebob/miniredis/v2"
 	builderCapella "github.com/attestantio/go-builder-client/api/capella"
-	v1 "github.com/attestantio/go-builder-client/api/v1"
 	"github.com/attestantio/go-eth2-client/spec/phase0"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/flashbots/go-boost-utils/bls"
@@ -23,8 +14,10 @@ import (
 	"github.com/flashbots/mev-boost-relay/common"
 	"github.com/flashbots/mev-boost-relay/database"
 	"github.com/flashbots/mev-boost-relay/datastore"
-	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/require"
+	"net/http"
+	"net/http/httptest"
+	"testing"
 )
 
 var builderSigningDomain = types.Domain([32]byte{0, 0, 0, 1, 245, 165, 253, 66, 209, 106, 32, 48, 39, 152, 239, 110, 211, 9, 151, 155, 67, 0, 61, 35, 32, 217, 240, 232, 234, 152, 49, 169})
@@ -271,53 +264,53 @@ func TestRegisterValidator(t *testing.T) {
 	// })
 }
 
-func TestGetHeader(t *testing.T) {
-	// Setup backend with headSlot and genesisTime
-	backend := newTestBackend(t, 1)
-	backend.relay.genesisInfo = &beaconclient.GetGenesisResponse{
-		Data: beaconclient.GetGenesisResponseData{
-			GenesisTime: uint64(time.Now().UTC().Unix()),
-		},
-	}
-
-	// request params
-	slot := uint64(2)
-	backend.relay.headSlot.Store(slot)
-	parentHash := "0x13e606c7b3d1faad7e83503ce3dedce4c6bb89b0c28ffb240d713c7b110b9747"
-	proposerPubkey := "0x6ae5932d1e248d987d51b58665b81848814202d7b23b343d20f2a167d12f07dcb01ca41c42fdd60b7fca9c4b90890792"
-	builderPubkey := "0xfa1ed37c3553d0ce1e9349b2c5063cf6e394d231c8d3e0df75e9462257c081543086109ffddaacc0aa76f33dc9661c83"
-	bidValue := big.NewInt(99)
-	trace := &common.BidTraceV2{
-		BidTrace: v1.BidTrace{
-			Value: uint256.MustFromBig(bidValue),
-		},
-	}
-
-	// request path
-	path := fmt.Sprintf("/eth/v1/builder/header/%d/%s/%s", slot, parentHash, proposerPubkey)
-
-	// Create a bid
-	opts := common.CreateTestBlockSubmissionOpts{
-		Slot:           slot,
-		ParentHash:     parentHash,
-		ProposerPubkey: proposerPubkey,
-	}
-	payload, getPayloadResp, getHeaderResp := common.CreateTestBlockSubmission(t, builderPubkey, bidValue, &opts)
-	_, err := backend.redis.SaveBidAndUpdateTopBid(context.Background(), backend.redis.NewPipeline(), trace, payload, getPayloadResp, getHeaderResp, time.Now(), false, nil)
-	require.NoError(t, err)
-
-	// Check 1: regular request works and returns a bid
-	rr := backend.request(http.MethodGet, path, nil)
-	require.Equal(t, http.StatusOK, rr.Code)
-	resp := common.GetHeaderResponse{}
-	err = json.Unmarshal(rr.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	require.Equal(t, bidValue.String(), resp.Value().String())
-
-	// Check 2: Request returns 204 if sending a filtered user agent
-	rr = backend.requestWithUA(http.MethodGet, path, "mev-boost/v1.5.0 Go-http-client/1.1", nil)
-	require.Equal(t, http.StatusNoContent, rr.Code)
-}
+//func TestGetHeader(t *testing.T) {
+//	// Setup backend with headSlot and genesisTime
+//	backend := newTestBackend(t, 1)
+//	backend.relay.genesisInfo = &beaconclient.GetGenesisResponse{
+//		Data: beaconclient.GetGenesisResponseData{
+//			GenesisTime: uint64(time.Now().UTC().Unix()),
+//		},
+//	}
+//
+//	// request params
+//	slot := uint64(2)
+//	backend.relay.headSlot.Store(slot)
+//	parentHash := "0x13e606c7b3d1faad7e83503ce3dedce4c6bb89b0c28ffb240d713c7b110b9747"
+//	proposerPubkey := "0x6ae5932d1e248d987d51b58665b81848814202d7b23b343d20f2a167d12f07dcb01ca41c42fdd60b7fca9c4b90890792"
+//	builderPubkey := "0xfa1ed37c3553d0ce1e9349b2c5063cf6e394d231c8d3e0df75e9462257c081543086109ffddaacc0aa76f33dc9661c83"
+//	bidValue := big.NewInt(99)
+//	trace := &common.BidTraceV2{
+//		BidTrace: v1.BidTrace{
+//			Value: uint256.MustFromBig(bidValue),
+//		},
+//	}
+//
+//	// request path
+//	path := fmt.Sprintf("/eth/v1/builder/header/%d/%s/%s", slot, parentHash, proposerPubkey)
+//
+//	// Create a bid
+//	opts := common.CreateTestBlockSubmissionOpts{
+//		Slot:           slot,
+//		ParentHash:     parentHash,
+//		ProposerPubkey: proposerPubkey,
+//	}
+//	payload, getPayloadResp, getHeaderResp := common.CreateTestBlockSubmission(t, builderPubkey, bidValue, &opts)
+//	_, err := backend.redis.SaveBidAndUpdateTopBid(context.Background(), backend.redis.NewPipeline(), trace, payload, getPayloadResp, getHeaderResp, time.Now(), false, nil)
+//	require.NoError(t, err)
+//
+//	// Check 1: regular request works and returns a bid
+//	rr := backend.request(http.MethodGet, path, nil)
+//	require.Equal(t, http.StatusOK, rr.Code)
+//	resp := common.GetHeaderResponse{}
+//	err = json.Unmarshal(rr.Body.Bytes(), &resp)
+//	require.NoError(t, err)
+//	require.Equal(t, bidValue.String(), resp.Value().String())
+//
+//	// Check 2: Request returns 204 if sending a filtered user agent
+//	rr = backend.requestWithUA(http.MethodGet, path, "mev-boost/v1.5.0 Go-http-client/1.1", nil)
+//	require.Equal(t, http.StatusNoContent, rr.Code)
+//}
 
 func TestBuilderApiGetValidators(t *testing.T) {
 	path := "/relay/v1/builder/validators"

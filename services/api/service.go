@@ -2,10 +2,10 @@
 package api
 
 import (
-	"bytes"
 	"compress/gzip"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +23,7 @@ import (
 	"github.com/NYTimes/gziphandler"
 	builderCapella "github.com/attestantio/go-builder-client/api/capella"
 	"github.com/attestantio/go-eth2-client/api/v1/capella"
+	capella2 "github.com/attestantio/go-eth2-client/spec/capella"
 	"github.com/attestantio/go-eth2-client/spec/phase0"
 	"github.com/buger/jsonparser"
 	"github.com/flashbots/go-boost-utils/bls"
@@ -61,8 +62,8 @@ var (
 	// Proposer API (builder-specs)
 	pathStatus            = "/eth/v1/builder/status"
 	pathRegisterValidator = "/eth/v1/builder/validators"
-	pathGetHeader         = "/eth/v1/builder/header/{slot:[0-9]+}/{parent_hash:0x[a-fA-F0-9]+}/{pubkey:0x[a-fA-F0-9]+}"
-	pathGetPayload        = "/eth/v1/builder/blinded_blocks"
+	// pathGetHeader         = "/eth/v1/builder/header/{slot:[0-9]+}/{parent_hash:0x[a-fA-F0-9]+}/{pubkey:0x[a-fA-F0-9]+}"
+	pathGetPayload = "/eth/v1/builder/blinded_blocks/{parent_hash:0x[a-fA-F0-9]+}/{pubkey:0x[a-fA-F0-9]+}"
 
 	// Block builder API
 	pathBuilderGetValidators = "/relay/v1/builder/validators"
@@ -334,8 +335,8 @@ func (api *RelayAPI) getRouter() http.Handler {
 		api.log.Info("proposer API enabled")
 		r.HandleFunc(pathStatus, api.handleStatus).Methods(http.MethodGet)
 		r.HandleFunc(pathRegisterValidator, api.handleRegisterValidator).Methods(http.MethodPost)
-		r.HandleFunc(pathGetHeader, api.handleGetHeader).Methods(http.MethodGet)
-		r.HandleFunc(pathGetPayload, api.handleGetPayload).Methods(http.MethodPost)
+		// r.HandleFunc(pathGetHeader, api.handleGetHeader).Methods(http.MethodGet)
+		r.HandleFunc(pathGetPayload, api.handleGetPayload).Methods(http.MethodGet)
 	}
 
 	// Builder API
@@ -1072,28 +1073,22 @@ func (api *RelayAPI) handleRegisterValidator(w http.ResponseWriter, req *http.Re
 	w.WriteHeader(http.StatusOK)
 }
 
-func (api *RelayAPI) handleGetHeader(w http.ResponseWriter, req *http.Request) {
+// GET /eth/v1/builder/blinded_blocks/{parent_hash:0x[a-fA-F0-9]+}/{pubkey:0x[a-fA-F0-9]+}
+func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
-	slotStr := vars["slot"]
 	parentHashHex := vars["parent_hash"]
 	proposerPubkeyHex := vars["pubkey"]
 	ua := req.UserAgent()
-	headSlot := api.headSlot.Load()
 
-	slot, err := strconv.ParseUint(slotStr, 10, 64)
-	if err != nil {
-		api.RespondError(w, http.StatusBadRequest, common.ErrInvalidSlot.Error())
-		return
-	}
+	// Let's keep slot high enough to reintroduce when needed
+	slot := uint64(0)
 
 	requestTime := time.Now().UTC()
 	slotStartTimestamp := api.genesisInfo.Data.GenesisTime + (slot * common.SecondsPerSlot)
 	msIntoSlot := requestTime.UnixMilli() - int64((slotStartTimestamp * 1000))
 
 	log := api.log.WithFields(logrus.Fields{
-		"method":           "getHeader",
-		"headSlot":         headSlot,
-		"slot":             slotStr,
+		"method":           "getPayload",
 		"parentHash":       parentHashHex,
 		"pubkey":           proposerPubkeyHex,
 		"ua":               ua,
@@ -1112,9 +1107,9 @@ func (api *RelayAPI) handleGetHeader(w http.ResponseWriter, req *http.Request) {
 		api.RespondError(w, http.StatusBadRequest, common.ErrInvalidHash.Error())
 		return
 	}
-
-	if slot < headSlot {
-		api.RespondError(w, http.StatusBadRequest, "slot is too old")
+	parentHash, err := hex.DecodeString(parentHashHex)
+	if err != nil {
+		api.RespondError(w, http.StatusBadRequest, common.ErrInvalidHash.Error())
 		return
 	}
 
@@ -1161,23 +1156,17 @@ func (api *RelayAPI) handleGetHeader(w http.ResponseWriter, req *http.Request) {
 		"value":     bid.Value().String(),
 		"blockHash": bid.BlockHash().String(),
 	}).Info("bid delivered")
-	api.RespondOK(w, bid)
-}
 
-func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) {
+	// --------- HERE: Original GetPayload handler starts
 	api.getPayloadCallsInFlight.Add(1)
 	defer api.getPayloadCallsInFlight.Done()
 
-	ua := req.UserAgent()
-	headSlot := api.headSlot.Load()
 	receivedAt := time.Now().UTC()
-	log := api.log.WithFields(logrus.Fields{
+	log = api.log.WithFields(logrus.Fields{
 		"method":                "getPayload",
 		"ua":                    ua,
 		"mevBoostV":             common.GetMevBoostVersionFromUserAgent(ua),
 		"contentLength":         req.ContentLength,
-		"headSlot":              headSlot,
-		"headSlotEpochPos":      (headSlot % common.SlotsPerEpoch) + 1,
 		"idArg":                 req.URL.Query().Get("id"),
 		"timestampRequestStart": receivedAt.UnixMilli(),
 	})
@@ -1191,111 +1180,44 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 		}).Info("request finished")
 	}()
 
-	// Read the body first, so we can decode it later
-	body, err := io.ReadAll(req.Body)
-	if err != nil {
-		if strings.Contains(err.Error(), "i/o timeout") {
-			log.WithError(err).Error("getPayload request failed to decode (i/o timeout)")
-			api.RespondError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-
-		log.WithError(err).Error("could not read body of request from the beacon node")
-		api.RespondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// Decode payload
-	payload := new(common.SignedBlindedBeaconBlock)
-	// TODO: add deneb support.
-	payload.Capella = new(capella.SignedBlindedBeaconBlock)
-	if err := json.NewDecoder(bytes.NewReader(body)).Decode(payload.Capella); err != nil {
-		log.WithError(err).Warn("failed to decode capella getPayload request")
-		api.RespondError(w, http.StatusBadRequest, "failed to decode capella payload")
-		return
-	}
+	// We try to construct payload from the bid, previously obtained (old GetHeader)
+	payloadSlot := slot
+	payloadBlockHash := bid.BlockHash().String()
 
 	// Take time after the decoding, and add to logging
 	decodeTime := time.Now().UTC()
-	slotStartTimestamp := api.genesisInfo.Data.GenesisTime + (payload.Slot() * common.SecondsPerSlot)
-	msIntoSlot := decodeTime.UnixMilli() - int64((slotStartTimestamp * 1000))
+	// slotStartTimestamp := api.genesisInfo.Data.GenesisTime + (payload.Slot() * common.SecondsPerSlot)
+	// msIntoSlot := decodeTime.UnixMilli() - int64((slotStartTimestamp * 1000))
 	log = log.WithFields(logrus.Fields{
-		"slot":                 payload.Slot(),
-		"slotEpochPos":         (payload.Slot() % common.SlotsPerEpoch) + 1,
-		"blockHash":            payload.BlockHash(),
+		"slot":                 payloadSlot,
+		"slotEpochPos":         (payloadSlot % common.SlotsPerEpoch) + 1,
+		"blockHash":            payloadBlockHash,
 		"slotStartSec":         slotStartTimestamp,
 		"msIntoSlot":           msIntoSlot,
 		"timestampAfterDecode": decodeTime.UnixMilli(),
-		"proposerIndex":        payload.ProposerIndex(),
 	})
 
 	// Ensure the proposer index is expected
-	api.proposerDutiesLock.RLock()
-	slotDuty := api.proposerDutiesMap[payload.Slot()]
-	api.proposerDutiesLock.RUnlock()
-	if slotDuty == nil {
-		log.Warn("could not find slot duty")
-	} else {
-		log = log.WithField("feeRecipient", slotDuty.Entry.Message.FeeRecipient)
-		if slotDuty.ValidatorIndex != payload.ProposerIndex() {
-			log.WithField("expectedProposerIndex", slotDuty.ValidatorIndex).Warn("not the expected proposer index")
-			api.RespondError(w, http.StatusBadRequest, "not the expected proposer index")
-			return
-		}
-	}
-
-	// Get the proposer pubkey based on the validator index from the payload
-	proposerPubkey, found := api.datastore.GetKnownValidatorPubkeyByIndex(payload.ProposerIndex())
-	if !found {
-		log.Errorf("could not find proposer pubkey for index %d", payload.ProposerIndex())
-		api.RespondError(w, http.StatusBadRequest, "could not match proposer index to pubkey")
-		return
-	}
-
-	// Add proposer pubkey to logs
-	log = log.WithField("proposerPubkey", proposerPubkey.String())
-
-	// Create a BLS pubkey from the hex pubkey
-	pk, err := boostTypes.HexToPubkey(proposerPubkey.String())
-	if err != nil {
-		log.WithError(err).Warn("could not convert pubkey to types.PublicKey")
-		api.RespondError(w, http.StatusBadRequest, "could not convert pubkey to types.PublicKey")
-		return
-	}
-
-	// Validate proposer signature (first attempt verifying the Capella signature)
-	// TODO: add deneb support.
-	ok, err := boostTypes.VerifySignature(payload.Message(), api.opts.EthNetDetails.DomainBeaconProposerCapella, pk[:], payload.Signature())
-	if !ok || err != nil {
-		if api.ffLogInvalidSignaturePayload {
-			txt, _ := json.Marshal(payload) //nolint:errchkjson
-			fmt.Println("payload_invalid_sig_capella: ", string(txt), "pubkey:", proposerPubkey.String())
-		}
-		log.WithError(err).Warn("could not verify capella payload signature")
-		api.RespondError(w, http.StatusBadRequest, "could not verify payload signature")
-		return
-	}
+	// NOTE: Duty here is always block proposal
 
 	// Log about received payload (with a valid proposer signature)
 	log = log.WithField("timestampAfterSignatureVerify", time.Now().UTC().UnixMilli())
 	log.Info("getPayload request received")
 
-	// TODO: store signed blinded block in database (always)
-
 	// Get the response - from Redis, Memcache or DB
 	// note that recent mev-boost versions only send getPayload to relays that provided the bid
-	getPayloadResp, err := api.datastore.GetGetPayloadResponse(log, payload.Slot(), proposerPubkey.String(), payload.BlockHash())
+	getPayloadResp, err := api.datastore.GetGetPayloadResponse(log, payloadSlot, proposerPubkeyHex, payloadBlockHash)
 	if err != nil || getPayloadResp == nil {
 		log.WithError(err).Warn("failed getting execution payload (1/2)")
 		time.Sleep(time.Duration(timeoutGetPayloadRetryMs) * time.Millisecond)
 
 		// Try again
-		getPayloadResp, err = api.datastore.GetGetPayloadResponse(log, payload.Slot(), proposerPubkey.String(), payload.BlockHash())
+		getPayloadResp, err = api.datastore.GetGetPayloadResponse(log, payloadSlot, proposerPubkeyHex, payloadBlockHash)
 		if err != nil || getPayloadResp == nil {
 			// Still not found! Error out now.
 			if errors.Is(err, datastore.ErrExecutionPayloadNotFound) {
 				// Couldn't find the execution payload, maybe it never was submitted to our relay! Check that now
-				_, err := api.db.GetBlockSubmissionEntry(payload.Slot(), proposerPubkey.String(), payload.BlockHash())
+				_, err := api.db.GetBlockSubmissionEntry(payloadSlot, proposerPubkeyHex, payloadBlockHash)
 				if errors.Is(err, sql.ErrNoRows) {
 					log.Warn("failed getting execution payload (2/2) - payload not found, block was never submitted to this relay")
 					api.RespondError(w, http.StatusBadRequest, "no execution payload for this request - block was never seen by this relay")
@@ -1316,7 +1238,7 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 	log = log.WithField("timestampAfterLoadResponse", time.Now().UTC().UnixMilli())
 
 	// Check whether getPayload has already been called -- TODO: do we need to allow multiple submissions of one blinded block?
-	err = api.redis.CheckAndSetLastSlotAndHashDelivered(payload.Slot(), payload.BlockHash())
+	err = api.redis.CheckAndSetLastSlotAndHashDelivered(payloadSlot, payloadBlockHash)
 	log = log.WithField("timestampAfterAlreadyDeliveredCheck", time.Now().UTC().UnixMilli())
 	if err != nil {
 		if errors.Is(err, datastore.ErrAnotherPayloadAlreadyDeliveredForSlot) {
@@ -1354,7 +1276,7 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 		api.RespondError(w, http.StatusBadRequest, fmt.Sprintf("sent too late - %d ms into slot", msIntoSlot))
 
 		go func() {
-			err := api.db.InsertTooLateGetPayload(payload.Slot(), proposerPubkey.String(), payload.BlockHash(), slotStartTimestamp, uint64(receivedAt.UnixMilli()), uint64(decodeTime.UnixMilli()), uint64(msIntoSlot))
+			err := api.db.InsertTooLateGetPayload(payloadSlot, proposerPubkeyHex, payloadBlockHash, slotStartTimestamp, uint64(receivedAt.UnixMilli()), uint64(decodeTime.UnixMilli()), uint64(msIntoSlot))
 			if err != nil {
 				log.WithError(err).Error("failed to insert payload too late into db")
 			}
@@ -1363,27 +1285,13 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 	}
 
 	// Check that ExecutionPayloadHeader fields (sent by the proposer) match our known ExecutionPayload
-	err = EqExecutionPayloadToHeader(payload, getPayloadResp)
-	if err != nil {
-		log.WithError(err).Warn("ExecutionPayloadHeader not matching known ExecutionPayload")
-		api.RespondError(w, http.StatusBadRequest, "invalid execution payload header")
-		return
-	}
+	// NOTE: Skip the blockHash check
+	// err = EqExecutionPayloadToHeader(payload, getPayloadResp)
 
 	// Publish the signed beacon block via beacon-node
-	timeBeforePublish := time.Now().UTC().UnixMilli()
-	log = log.WithField("timestampBeforePublishing", timeBeforePublish)
-	signedBeaconBlock := common.SignedBlindedBeaconBlockToBeaconBlock(payload, getPayloadResp)
-	code, err := api.beaconClient.PublishBlock(signedBeaconBlock) // errors are logged inside
-	if err != nil || code != http.StatusOK {
-		log.WithError(err).WithField("code", code).Error("failed to publish block")
-		api.RespondError(w, http.StatusBadRequest, "failed to publish block")
-		return
-	}
-	timeAfterPublish := time.Now().UTC().UnixMilli()
-	msNeededForPublishing := uint64(timeAfterPublish - timeBeforePublish)
-	log = log.WithField("timestampAfterPublishing", timeAfterPublish)
-	log.WithField("msNeededForPublishing", msNeededForPublishing).Info("block published through beacon node")
+	// NOTE: We don't need to publish anything to CL as op-node is authoritatively deciding on block
+	// timeAfterPublish := time.Now().UTC().UnixMilli()
+	msNeededForPublishing := uint64(0)
 
 	// give the beacon network some time to propagate the block
 	time.Sleep(time.Duration(getPayloadResponseDelayMs) * time.Millisecond)
@@ -1392,16 +1300,34 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 	api.RespondOK(w, getPayloadResp)
 	log = log.WithFields(logrus.Fields{
 		"numTx":       getPayloadResp.NumTx(),
-		"blockNumber": payload.BlockNumber(),
+		"blockNumber": "<block number>",
 	})
 	log.Info("execution payload delivered")
 
 	// Save information about delivered payload
+	// TODO: Can we skip to write this "delivered payload" - there is no commitment to the CL anyway
 	go func() {
-		bidTrace, err := api.redis.GetBidTrace(payload.Slot(), proposerPubkey.String(), payload.BlockHash())
+		bidTrace, err := api.redis.GetBidTrace(payloadSlot, proposerPubkeyHex, payloadBlockHash)
 		if err != nil {
 			log.WithError(err).Error("failed to get bidTrace for delivered payload from redis")
 			return
+		}
+
+		// just reconstructing part of the payload here, to write "something" to the db
+		// preferably we would just drop the entire goroutine 👆.
+		blockHash, _ := hex.DecodeString(payloadBlockHash)
+		payload := new(common.SignedBlindedBeaconBlock)
+		payload.Capella = &capella.SignedBlindedBeaconBlock{
+			Message: &capella.BlindedBeaconBlock{
+				Slot:       phase0.Slot(bidTrace.Slot),
+				ParentRoot: phase0.Root(parentHash),
+				Body: &capella.BlindedBeaconBlockBody{
+					ExecutionPayloadHeader: &capella2.ExecutionPayloadHeader{
+						ParentHash: phase0.Hash32(parentHash),
+						BlockHash:  phase0.Hash32(blockHash),
+					},
+				},
+			},
 		}
 
 		err = api.db.SaveDeliveredPayload(bidTrace, payload, decodeTime, msNeededForPublishing)
@@ -1445,10 +1371,10 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 		signedBeaconBlock := common.SignedBlindedBeaconBlockToBeaconBlock(payload, getPayloadResp)
 
 		// Get registration entry from the DB.
-		registrationEntry, err := api.db.GetValidatorRegistration(proposerPubkey.String())
+		registrationEntry, err := api.db.GetValidatorRegistration(proposerPubkeyHex)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				log.WithError(err).Error("no registration found for validator " + proposerPubkey.String())
+				log.WithError(err).Error("no registration found for validator " + proposerPubkeyHex)
 			} else {
 				log.WithError(err).Error("error reading validator registration")
 			}
