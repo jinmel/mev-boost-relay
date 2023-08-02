@@ -433,17 +433,41 @@ func (api *RelayAPI) StartServer() (err error) {
 		return ErrMismatchedForkVersions
 	}
 
-	// start proposer API specific things
-	if api.opts.ProposerAPI {
-		// Update known validators (which can take 10-30 sec). This is a requirement for service readiness, because without them,
-		// getPayload() doesn't have the information it needs (known validators), which could lead to missed slots.
-		go api.datastore.RefreshKnownValidators(api.log, api.beaconClient, currentSlot)
+	// // start proposer API specific things
+	// if api.opts.ProposerAPI {
+	// 	// Update known validators (which can take 10-30 sec). This is a requirement for service readiness, because without them,
+	// 	// getPayload() doesn't have the information it needs (known validators), which could lead to missed slots.
+	// 	go api.datastore.RefreshKnownValidators(api.log, api.beaconClient, currentSlot)
+	//
+	// 	// Start the validator registration db-save processor
+	// 	api.log.Infof("starting %d validator registration processors", numValidatorRegProcessors)
+	// 	for i := 0; i < numValidatorRegProcessors; i++ {
+	// 		go api.startValidatorRegistrationDBProcessor()
+	// 	}
+	// }
 
-		// Start the validator registration db-save processor
-		api.log.Infof("starting %d validator registration processors", numValidatorRegProcessors)
-		for i := 0; i < numValidatorRegProcessors; i++ {
-			go api.startValidatorRegistrationDBProcessor()
-		}
+	feeRecipient, err := boostTypes.HexToAddress("") // TODO
+	if err != nil {
+		return err
+	}
+
+	pubKey, err := boostTypes.HexToPubkey("") // TODO
+	if err != nil {
+		return err
+	}
+
+	valReg := boostTypes.SignedValidatorRegistration{
+		Message: &boostTypes.RegisterValidatorRequestMessage{
+			FeeRecipient: feeRecipient,
+			GasLimit:     0,
+			Timestamp:    uint64(time.Now().Unix()),
+			Pubkey:       pubKey,
+		},
+		Signature: boostTypes.Signature{},
+	}
+
+	if err := api.datastore.SaveValidatorRegistration(valReg); err != nil {
+		return err
 	}
 
 	// start block-builder API specific things
