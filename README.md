@@ -36,9 +36,16 @@ You can connect to DB via `localhost:8093`
   --redis-uri "localhost:6379" \
   --listen-addr "0.0.0.0:9062" \
   --beacon-uris "http://localhost:7500" \
-  --secret-key "0xfda76b34652e5880d097e08e0074bdf788cc3ab6c09ca273bbe2633eef3ef671"
+  --secret-key "0x3dd5f69c2e334a81ee84deb2f2da0e460b0b90aca2cd2e7d948cce056982c119"
 ```
 
+### 4. BLS key pair
+See https://iancoleman.io/blsttc_ui/
+
+```hex
+Private Key: 3dd5f69c2e334a81ee84deb2f2da0e460b0b90aca2cd2e7d948cce056982c119
+Public Key : b91d4cc824239f8ca19916b251b9ccc7546ecef1ca0d1c784e05f3572a67a8e9b1c2be6740824641a0d46d8e4a86a722
+```
 
 
 ----

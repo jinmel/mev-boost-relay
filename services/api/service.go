@@ -397,21 +397,18 @@ func (api *RelayAPI) StartServer() (err error) {
 	log := api.log.WithField("method", "StartServer")
 
 	// Get best beacon-node status by head slot, process current slot and start slot updates
-	syncStatus, err := api.beaconClient.BestSyncStatus()
-	if err != nil {
-		return err
-	}
-	currentSlot := syncStatus.HeadSlot
+	//syncStatus, err := api.beaconClient.BestSyncStatus()
+	//if err != nil {
+	//	return err
+	//}
+	currentSlot := uint64(0)
 
 	// Initialize block builder cache.
 	api.blockBuildersCache = make(map[string]*blockBuilderCacheEntry)
 
 	// Get genesis info
-	api.genesisInfo, err = api.beaconClient.GetGenesis()
-	if err != nil {
-		return err
-	}
-	log.Infof("genesis info: %d", api.genesisInfo.Data.GenesisTime)
+	api.genesisInfo = &beaconclient.GetGenesisResponse{Data: beaconclient.GetGenesisResponseData{}}
+	log.Infof("genesis info: %s", "no genesis available boss")
 
 	// Get and prepare fork schedule
 	//forkSchedule, err := api.beaconClient.GetForkSchedule()
@@ -449,12 +446,12 @@ func (api *RelayAPI) StartServer() (err error) {
 	// 	}
 	// }
 
-	feeRecipient, err := boostTypes.HexToAddress("") // TODO
+	feeRecipient, err := boostTypes.HexToAddress("0x4F96987Cf137221B5E235fD9cF0253936C21e45d") // TODO
 	if err != nil {
 		return err
 	}
 
-	pubKey, err := boostTypes.HexToPubkey("") // TODO
+	pubKey, err := boostTypes.HexToPubkey("0xb91d4cc824239f8ca19916b251b9ccc7546ecef1ca0d1c784e05f3572a67a8e9b1c2be6740824641a0d46d8e4a86a722") // TODO
 	if err != nil {
 		return err
 	}
@@ -476,7 +473,7 @@ func (api *RelayAPI) StartServer() (err error) {
 	// start block-builder API specific things
 	if api.opts.BlockBuilderAPI {
 		// Get current proposer duties blocking before starting, to have them ready
-		api.updateProposerDuties(syncStatus.HeadSlot)
+		//api.updateProposerDuties(syncStatus.HeadSlot)
 
 		// Subscribe to payload attributes events (only for builder-api)
 		go func() {
