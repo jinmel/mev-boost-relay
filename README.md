@@ -6,6 +6,44 @@
 
 MEV-Boost Relay for Ethereum proposer/builder separation (PBS).
 
+## Notes on running locally
+
+### 1. Pull dependencies (docker compose)
+In repo root run
+```bash
+docker-compose up
+```
+you can delete/comment memcached as its optional
+
+### 2. Running migrations
+
+PG DSN is in format: `postgresql://user:secret@host:port/db-name?options`
+
+To run DB migrations, from repo root run:
+```bash
+go run main.go tool migrate \
+  --db "postgresql://postgres:postgres@localhost:5432/postgres?sslmode=disable"
+```
+or `./mev-boost-relay tool migrate ...` if you ran `make build`
+
+You can connect to DB via `localhost:8093`
+
+### 3. Running relay
+
+```bash
+./mev-boost-relay api \
+  --db "postgresql://postgres:postgres@localhost:5432/postgres?sslmode=disable" \
+  --redis-uri "localhost:6379" \
+  --listen-addr "0.0.0.0:9062" \
+  --beacon-uris "http://localhost:7500" \
+  --secret-key "0xfda76b34652e5880d097e08e0074bdf788cc3ab6c09ca273bbe2633eef3ef671"
+```
+
+
+
+----
+
+----
 Currently live at:
 
 * [boost-relay.flashbots.net](https://boost-relay.flashbots.net) (also on [Goerli](https://boost-relay-goerli.flashbots.net) and [Sepolia](https://boost-relay-sepolia.flashbots.net))

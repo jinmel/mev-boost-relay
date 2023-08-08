@@ -11,11 +11,11 @@ services:
     ports:
       - '6379:6379'
 
-  memcached:
-    image: memcached
-    restart: always
-    ports:
-      - '11211:11211'
+#  memcached:
+#    image: memcached
+#    restart: always
+#    ports:
+#      - '11211:11211'
 
   db:
     image: postgres
@@ -29,6 +29,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
 
+  # phpMyAdmin-like DB browser, localhost:8093
   adminer:
     image: adminer
     restart: always

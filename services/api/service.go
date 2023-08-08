@@ -125,7 +125,7 @@ type RelayAPIOpts struct {
 	SecretKey *bls.SecretKey // used to sign bids (getHeader responses)
 
 	// Network specific variables
-	EthNetDetails common.EthNetworkDetails
+	//EthNetDetails common.EthNetworkDetails
 
 	// APIs to enable
 	ProposerAPI     bool
@@ -376,12 +376,14 @@ func (api *RelayAPI) getRouter() http.Handler {
 	return withGz
 }
 
+// isCapella returns always true regardless of the slot
 func (api *RelayAPI) isCapella(slot uint64) bool {
-	if api.capellaEpoch == 0 { // CL didn't yet have it
-		return false
-	}
-	epoch := slot / common.SlotsPerEpoch
-	return epoch >= api.capellaEpoch
+	return true
+	//if api.capellaEpoch == 0 { // CL didn't yet have it
+	//	return false
+	//}
+	//epoch := slot / common.SlotsPerEpoch
+	//return epoch >= api.capellaEpoch
 }
 
 // StartServer starts up this API instance and HTTP server
@@ -412,21 +414,22 @@ func (api *RelayAPI) StartServer() (err error) {
 	log.Infof("genesis info: %d", api.genesisInfo.Data.GenesisTime)
 
 	// Get and prepare fork schedule
-	forkSchedule, err := api.beaconClient.GetForkSchedule()
-	if err != nil {
-		return err
-	}
-	for _, fork := range forkSchedule.Data {
-		log.Infof("forkSchedule: version=%s / epoch=%d", fork.CurrentVersion, fork.Epoch)
-		switch fork.CurrentVersion {
-		case api.opts.EthNetDetails.CapellaForkVersionHex:
-			api.capellaEpoch = fork.Epoch
-			// TODO: add deneb support.
-		}
-	}
+	//forkSchedule, err := api.beaconClient.GetForkSchedule()
+	//if err != nil {
+	//	return err
+	//}
+	//for _, fork := range forkSchedule.Data {
+	//	log.Infof("forkSchedule: version=%s / epoch=%d", fork.CurrentVersion, fork.Epoch)
+	//	switch fork.CurrentVersion {
+	//	case api.opts.EthNetDetails.CapellaForkVersionHex:
+	//		api.capellaEpoch = fork.Epoch
+	//		// TODO: add deneb support.
+	//	}
+	//}
 
 	// Print fork version information
 	// TODO: add deneb support.
+	// NOTE: isCapella() returns always true for now.
 	if api.isCapella(currentSlot) {
 		log.Infof("capella fork detected (currentEpoch: %d / capellaEpoch: %d)", common.SlotToEpoch(currentSlot), api.capellaEpoch)
 	} else {
@@ -1052,21 +1055,6 @@ func (api *RelayAPI) handleRegisterValidator(w http.ResponseWriter, req *http.Re
 			return
 		}
 
-		// Verify the signature
-		ok, err := boostTypes.VerifySignature(signedValidatorRegistration.Message, api.opts.EthNetDetails.DomainBuilder, signedValidatorRegistration.Message.Pubkey[:], signedValidatorRegistration.Signature[:])
-		if err != nil {
-			regLog.WithError(err).Error("error verifying registerValidator signature")
-			return
-		} else if !ok {
-			regLog.Info("invalid validator signature")
-			if api.ffRegValContinueOnInvalidSig {
-				return
-			} else {
-				handleError(regLog, http.StatusBadRequest, fmt.Sprintf("failed to verify validator signature for %s", signedValidatorRegistration.Message.Pubkey.String()))
-				return
-			}
-		}
-
 		// Now we have a new registration to process
 		numRegNew += 1
 
@@ -1665,21 +1653,6 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 		}
 	}
 
-	// Verify the signature
-	log = log.WithField("timestampBeforeSignatureCheck", time.Now().UTC().UnixMilli())
-	signature := payload.Signature()
-	ok, err = boostTypes.VerifySignature(payload.Message(), api.opts.EthNetDetails.DomainBuilder, builderPubkey[:], signature[:])
-	log = log.WithField("timestampAfterSignatureCheck", time.Now().UTC().UnixMilli())
-	if err != nil {
-		log.WithError(err).Warn("failed verifying builder signature")
-		api.RespondError(w, http.StatusBadRequest, "failed verifying builder signature")
-		return
-	} else if !ok {
-		log.Warn("invalid builder signature")
-		api.RespondError(w, http.StatusBadRequest, "invalid signature")
-		return
-	}
-
 	// Create the redis pipeline tx
 	tx := api.redis.NewTxPipeline()
 
@@ -1851,13 +1824,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	}
 
 	// Prepare the response data
-	getHeaderResponse, err := common.BuildGetHeaderResponse(payload, api.blsSk, api.publicKey, api.opts.EthNetDetails.DomainBuilder)
-	if err != nil {
-		log.WithError(err).Error("could not sign builder bid")
-		api.RespondError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
+	getHeaderResponse := &common.GetHeaderResponse{}
 	getPayloadResponse, err := common.BuildGetPayloadResponse(payload)
 	if err != nil {
 		log.WithError(err).Error("could not build getPayload response")

@@ -60,7 +60,7 @@ func init() {
 		"Enable memcached, typically used as secondary backup to Redis for redundancy")
 	apiCmd.Flags().StringVar(&apiSecretKey, "secret-key", apiDefaultSecretKey, "secret key for signing bids")
 	apiCmd.Flags().StringVar(&apiBlockSimURL, "blocksim", apiDefaultBlockSim, "URL for block simulator")
-	apiCmd.Flags().StringVar(&network, "network", defaultNetwork, "Which network to use")
+	//apiCmd.Flags().StringVar(&network, "network", defaultNetwork, "Which network to use")
 
 	apiCmd.Flags().BoolVar(&apiPprofEnabled, "pprof", apiDefaultPprofEnabled, "enable pprof API")
 	apiCmd.Flags().BoolVar(&apiBuilderAPI, "builder-api", apiDefaultBuilderAPIEnabled, "enable builder API (/builder/...)")
@@ -88,7 +88,8 @@ var apiCmd = &cobra.Command{
 		}
 		log.Infof("boost-relay %s", Version)
 
-		networkInfo, err := common.NewEthNetworkDetails(network)
+		network = "custom"
+		networkInfo := common.EthNetworkDetails{Name: network}
 		if err != nil {
 			log.WithError(err).Fatalf("error getting network details")
 		}
@@ -145,15 +146,14 @@ var apiCmd = &cobra.Command{
 		}
 
 		opts := api.RelayAPIOpts{
-			Log:           log,
-			ListenAddr:    apiListenAddr,
-			BeaconClient:  beaconClient,
-			Datastore:     ds,
-			Redis:         redis,
-			Memcached:     mem,
-			DB:            db,
-			EthNetDetails: *networkInfo,
-			BlockSimURL:   apiBlockSimURL,
+			Log:          log,
+			ListenAddr:   apiListenAddr,
+			BeaconClient: beaconClient,
+			Datastore:    ds,
+			Redis:        redis,
+			Memcached:    mem,
+			DB:           db,
+			BlockSimURL:  apiBlockSimURL,
 
 			BlockBuilderAPI: apiBuilderAPI,
 			DataAPI:         apiDataAPI,
