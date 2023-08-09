@@ -1,0 +1,61 @@
+version: '3.1'
+
+volumes:
+  psql_data:
+    driver: local
+
+services:
+  redis:
+    image: redis
+    restart: always
+    ports:
+      - '6379:6379'
+
+#  memcached:
+#    image: memcached
+#    restart: always
+#    ports:
+#      - '11211:11211'
+
+  db:
+    image: postgres
+    restart: always
+    volumes:
+      - 'psql_data:/var/lib/postgresql/data'
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -q -U postgres -d postgres" ]
+      interval: 30s
+      timeout: 30s
+      retries: 10
+
+  # phpMyAdmin-like DB browser, localhost:8093
+  adminer:
+    image: adminer
+    restart: always
+    depends_on:
+      - db
+    ports:
+      - '8093:8080'
+    environment:
+      ADMINER_PLUGINS: tables-filter tinymce
+
+  mev-boost-relay:
+    image: flashbots/mev-boost-relay:latest
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      BEACON_HOST: localhost
+      BEACON_PORT: 8546
